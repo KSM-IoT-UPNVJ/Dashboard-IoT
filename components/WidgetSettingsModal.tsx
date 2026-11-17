@@ -31,11 +31,18 @@ export default function WidgetSettingsModal({
   onSave,
   onCreateDatastream,
 }: Props) {
+  const initialDeviceId = device
+    ? device.id
+    : devices
+      ? (widget.deviceId && devices.some((d) => d.id === widget.deviceId)
+          ? widget.deviceId
+          : devices[0]?.id || "")
+      : widget.deviceId || "";
   const [title, setTitle] = useState(widget.title);
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(
-    widget.deviceId || device?.id || (devices && devices[0]?.id) || ""
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string>(initialDeviceId);
+  const [selectedVpin, setSelectedVpin] = useState<string>(
+    !widget.deviceId || widget.deviceId === initialDeviceId ? widget.vpin || "" : ""
   );
-  const [selectedVpin, setSelectedVpin] = useState<string>(widget.vpin || "");
   const [colSpan, setColSpan] = useState<number>(widget.colSpan || 1);
 
   // Determine current active device
@@ -107,23 +114,29 @@ export default function WidgetSettingsModal({
         <div className="blynk-ws-body">
           {/* Left Config Panel */}
           <div className="blynk-ws-left">
-            {/* If multiple devices exist (in Dashboard view), let user choose device */}
-            {devices && devices.length > 0 && (
+            {/* Show dashboard-scoped target device(s) when editing from Dashboard view */}
+            {devices && (
               <div className="blynk-input-field">
                 <label>TARGET DEVICE</label>
-                <select
-                  value={selectedDeviceId}
-                  onChange={(e) => {
-                    setSelectedDeviceId(e.target.value);
-                    setSelectedVpin(""); // reset pin on device switch
-                  }}
-                >
-                  {devices.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name} ({d.type})
-                    </option>
-                  ))}
-                </select>
+                {devices.length > 0 ? (
+                  <select
+                    value={selectedDeviceId}
+                    onChange={(e) => {
+                      setSelectedDeviceId(e.target.value);
+                      setSelectedVpin(""); // reset pin on device switch
+                    }}
+                  >
+                    {devices.map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name} ({d.type})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <div style={{ fontSize: 13, color: "#ef4444", padding: "8px 0" }}>
+                    Device yang dipilih untuk dashboard ini tidak ditemukan.
+                  </div>
+                )}
               </div>
             )}
 
@@ -199,6 +212,8 @@ export default function WidgetSettingsModal({
                 <button
                   type="button"
                   className="btn-create-datastream"
+                  disabled={!currentDev}
+                  style={!currentDev ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
                   onClick={() => onCreateDatastream(selectedDeviceId)}
                 >
                   Create Datastream

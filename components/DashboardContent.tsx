@@ -12,8 +12,21 @@ interface DashboardItem {
   id: string;
   name: string;
   deviceId?: string;
+  deviceIds?: string[];
   createdAt: number;
   widgets: CanvasWidget[];
+}
+
+function getDashboardDeviceIds(dashboard: DashboardItem | null): string[] {
+  if (!dashboard) return [];
+  const rawIds = dashboard.deviceIds
+    ? Array.isArray(dashboard.deviceIds)
+      ? dashboard.deviceIds
+      : Object.values(dashboard.deviceIds)
+    : [];
+  const normalized = rawIds.filter((id): id is string => typeof id === "string" && id.length > 0);
+  if (normalized.length > 0) return normalized;
+  return dashboard.deviceId ? [dashboard.deviceId] : [];
 }
 
 export default function DashboardContent() {
@@ -72,6 +85,7 @@ export default function DashboardContent() {
       const data = snapshot.val();
       if (!data) {
         setDevices([]);
+        setSelectedDeviceForNewDash("");
         return;
       }
       const list: DeviceItem[] = Object.entries(data).map(([id, val]) => ({
@@ -79,12 +93,13 @@ export default function DashboardContent() {
         ...(val as Omit<DeviceItem, "id">),
       }));
       setDevices(list);
-      // Auto-select first device for new dashboard modal if not set
-      if (!selectedDeviceForNewDash && list.length > 0) {
-        setSelectedDeviceForNewDash(list[0].id);
-      }
+      // Auto-select first device for new dashboard modal if not set or no longer valid
+      setSelectedDeviceForNewDash((prev) => {
+        if (prev && list.some((d) => d.id === prev)) return prev;
+        return list[0]?.id || "";
+      });
     });
-  }, [user, selectedDeviceForNewDash]);
+  }, [user]);
 
   // Fetch dashboards (NO auto-creation of default template dashboard!)
   useEffect(() => {
@@ -132,8 +147,15 @@ export default function DashboardContent() {
   }, [user, activeDashId]);
 
   const activeDashboard = dashboards.find((d) => d.id === activeDashId) || dashboards[0] || null;
-  const connectedDevice = activeDashboard?.deviceId
-    ? devices.find((d) => d.id === activeDashboard.deviceId)
+  const selectedDashDeviceIds = getDashboardDeviceIds(activeDashboard);
+  const hasExplicitDashDevices = selectedDashDeviceIds.length > 0;
+  const dashboardDevices = hasExplicitDashDevices
+    ? devices.filter((d) => selectedDashDeviceIds.includes(d.id))
+    : devices;
+  const connectedDevice = hasExplicitDashDevices
+    ? (activeDashboard?.deviceId
+        ? dashboardDevices.find((d) => d.id === activeDashboard.deviceId)
+        : undefined) || dashboardDevices[0] || null
     : devices[0] || null;
 
   // Dashboard Management: Create New Dashboard (Gambar 3)
@@ -194,7 +216,7 @@ export default function DashboardContent() {
       case "video": title = "Live video"; colSpan = 1; break;
     }
 
-    const defaultDevId = activeDashboard.deviceId || devices[0]?.id || "";
+    const defaultDevId = activeDashboard.deviceId || selectedDashDeviceIds[0] || devices[0]?.id || "";
 
     const newWidget: CanvasWidget = {
       id: `w_dash_${Date.now()}`,
@@ -268,9 +290,11 @@ export default function DashboardContent() {
 
   // Interactive control: updates device virtual pin
   const handleInteract = async (widget: CanvasWidget, nextVal: number | string) => {
-    if (!user || !widget.deviceId || !widget.vpin) return;
+    const resolvedDevice =
+      dashboardDevices.find((d) => d.id === widget.deviceId) || connectedDevice;
+    if (!user || !resolvedDevice?.id || !widget.vpin) return;
     try {
-      await update(ref(rtdb, `users/${user.uid}/devices/${widget.deviceId}/datastreams/${widget.vpin}`), {
+      await update(ref(rtdb, `users/${user.uid}/devices/${resolvedDevice.id}/datastreams/${widget.vpin}`), {
         value: nextVal,
       });
     } catch (err) {
@@ -540,7 +564,7 @@ export default function DashboardContent() {
                   ) : (
                     <div className="canvas-widgets-grid">
                       {activeDashboard.widgets.map((w, index) => {
-                        const targetDev = devices.find((d) => d.id === w.deviceId) || connectedDevice;
+                        const targetDev = dashboardDevices.find((d) => d.id === w.deviceId) || connectedDevice;
                         const currentDs = (targetDev && w.vpin) ? targetDev.datastreams?.[w.vpin] : null;
                         const currentVal = currentDs?.value !== undefined ? currentDs.value : w.value;
                         const isConfigured = Boolean(targetDev && w.vpin && currentDs);
@@ -804,7 +828,7 @@ export default function DashboardContent() {
       {activeWidgetModal && (
         <WidgetSettingsModal
           widget={activeWidgetModal}
-          devices={devices}
+          devices={dashboardDevices}
           onClose={() => setActiveWidgetModal(null)}
           onSave={async (updated) => {
             if (!user || !activeDashboard) return;

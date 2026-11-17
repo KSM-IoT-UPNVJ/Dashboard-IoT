@@ -50,6 +50,8 @@ export interface DeviceItem {
 export interface DashboardItem {
   id: string;
   name: string;
+  deviceId?: string;
+  deviceIds?: string[];
   createdAt: number;
   widgets?: CanvasWidget[];
 }
