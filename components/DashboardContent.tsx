@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, DragEvent } from "react";
+import { useEffect, useRef, useState, DragEvent } from "react";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { ref, onValue, push, set, update, remove } from "firebase/database";
 import { auth, rtdb } from "@/lib/firebase";
@@ -29,6 +29,27 @@ function getDashboardDeviceIds(dashboard: DashboardItem | null): string[] {
   return dashboard.deviceId ? [dashboard.deviceId] : [];
 }
 
+// Shows a name cut to `max` characters + "..." and reveals the full name on hover.
+function TruncatedName({
+  name,
+  max,
+  align = "left",
+}: {
+  name: string;
+  max: number;
+  align?: "left" | "right";
+}) {
+  const chars = Array.from(name || "");
+  if (chars.length <= max) return <span>{name}</span>;
+  return (
+    <span className={`name-tooltip ${align === "right" ? "align-right" : ""}`} data-full={name} aria-label={name}>
+      {chars.slice(0, max).join("")}...
+    </span>
+  );
+}
+
+const MAX_VISIBLE_STATUS = 3; // show all when <= 3, otherwise 2 + "Lihat semua device"
+
 export default function DashboardContent() {
   const [user, setUser] = useState<User | null>(null);
   const [dashboards, setDashboards] = useState<DashboardItem[]>([]);
@@ -45,7 +66,11 @@ export default function DashboardContent() {
   // New Dashboard Modal (Gambar 3)
   const [showNewDashModal, setShowNewDashModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
-  const [selectedDeviceForNewDash, setSelectedDeviceForNewDash] = useState<string>("");
+  const [selectedDevicesForNewDash, setSelectedDevicesForNewDash] = useState<string[]>([]);
+  const toggleDeviceForNewDash = (id: string) =>
+    setSelectedDevicesForNewDash((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
   const [creatingDash, setCreatingDash] = useState(false);
 
   // Modals
@@ -55,6 +80,32 @@ export default function DashboardContent() {
 
   // Drag-and-drop reorder
   const [draggedWidgetIdx, setDraggedWidgetIdx] = useState<number | null>(null);
+
+  // "Lihat semua device" status popover
+  const [showAllStatus, setShowAllStatus] = useState(false);
+  const statusPopoverRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setShowAllStatus(false);
+  }, [activeDashId]);
+
+  useEffect(() => {
+    if (!showAllStatus) return;
+    const onDocMouseDown = (e: MouseEvent) => {
+      if (statusPopoverRef.current && !statusPopoverRef.current.contains(e.target as Node)) {
+        setShowAllStatus(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowAllStatus(false);
+    };
+    document.addEventListener("mousedown", onDocMouseDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocMouseDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [showAllStatus]);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -72,7 +123,7 @@ export default function DashboardContent() {
       setActiveDashId(active);
     }
     if (createFor) {
-      setSelectedDeviceForNewDash(createFor);
+      setSelectedDevicesForNewDash([createFor]);
       setShowNewDashModal(true);
     }
   }, []);
@@ -85,7 +136,7 @@ export default function DashboardContent() {
       const data = snapshot.val();
       if (!data) {
         setDevices([]);
-        setSelectedDeviceForNewDash("");
+        setSelectedDevicesForNewDash([]);
         return;
       }
       const list: DeviceItem[] = Object.entries(data).map(([id, val]) => ({
@@ -93,11 +144,8 @@ export default function DashboardContent() {
         ...(val as Omit<DeviceItem, "id">),
       }));
       setDevices(list);
-      // Auto-select first device for new dashboard modal if not set or no longer valid
-      setSelectedDeviceForNewDash((prev) => {
-        if (prev && list.some((d) => d.id === prev)) return prev;
-        return list[0]?.id || "";
-      });
+      // Drop selections for devices that no longer exist
+      setSelectedDevicesForNewDash((prev) => prev.filter((id) => list.some((d) => d.id === id)));
     });
   }, [user]);
 
@@ -158,6 +206,23 @@ export default function DashboardContent() {
         : undefined) || dashboardDevices[0] || null
     : devices[0] || null;
 
+  // Devices shown in the header status list, sorted:
+  // 1) online first, 2) alphabetical, 3) numbers in natural order (tes2 < tes10).
+  const statusDevices: DeviceItem[] = (() => {
+    const list = hasExplicitDashDevices
+      ? dashboardDevices
+      : connectedDevice ? [connectedDevice] : [];
+    const nameKey = (n: string) => (n || "").replace(/\s+/g, "").toLowerCase();
+    return [...list].sort((a, b) => {
+      const aOn = a.status === "online" ? 0 : 1;
+      const bOn = b.status === "online" ? 0 : 1;
+      if (aOn !== bOn) return aOn - bOn;
+      const byName = nameKey(a.name).localeCompare(nameKey(b.name), undefined, { numeric: true, sensitivity: "base" });
+      if (byName !== 0) return byName;
+      return (a.name || "").localeCompare(b.name || "", undefined, { numeric: true });
+    });
+  })();
+
   // Dashboard Management: Create New Dashboard (Gambar 3)
   const handleCreateDashboard = async () => {
     if (!user || !newProjectName.trim()) return;
@@ -167,13 +232,15 @@ export default function DashboardContent() {
       const newRef = push(dashRef);
       await set(newRef, {
         name: newProjectName.trim(),
-        deviceId: selectedDeviceForNewDash || (devices[0]?.id || ""),
+        deviceId: selectedDevicesForNewDash[0] || "",
+        deviceIds: selectedDevicesForNewDash,
         createdAt: Date.now(),
         widgets: [],
       });
       setActiveDashId(newRef.key!);
       setShowNewDashModal(false);
       setNewProjectName("");
+      setSelectedDevicesForNewDash([]);
     } catch (err) {
       console.error(err);
       alert("Gagal membuat dashboard baru.");
@@ -346,6 +413,7 @@ export default function DashboardContent() {
             className="dash-btn-new-dash"
             onClick={() => {
               setNewProjectName("");
+              setSelectedDevicesForNewDash([]);
               setShowNewDashModal(true);
             }}
           >
@@ -413,10 +481,17 @@ export default function DashboardContent() {
             <>
               {/* Header inside active dashboard */}
               <div className="dash-active-header">
-                <div>
+                <div className="dash-active-info">
                   <h2 className="dash-active-title">{activeDashboard.name}</h2>
                   <p className="dash-active-meta">
-                    {connectedDevice?.name || "Multi-device"} · {activeDashboard.widgets?.length || 0} widget
+                    {statusDevices.length > 0
+                      ? statusDevices.map((d, i) => (
+                          <span key={d.id}>
+                            {i > 0 && ", "}
+                            <TruncatedName name={d.name} max={10} />
+                          </span>
+                        ))
+                      : "Multi-device"} · {activeDashboard.widgets?.length || 0} widget
                   </p>
                 </div>
                 <div className="dash-active-actions">
@@ -426,11 +501,58 @@ export default function DashboardContent() {
                   >
                     {isEditing ? "✔ Done Editing" : "Edit Dashboard"}
                   </button>
-                  <div className="dash-device-status-badge">
-                    <span className={`status-dot ${connectedDevice?.status === "online" ? "online" : "offline"}`} />
-                    <span className="status-label">
-                      {connectedDevice?.name || "Device"} · {connectedDevice?.status === "online" ? "Online" : "Offline"}
-                    </span>
+                  <div className="dash-device-status-list" ref={statusPopoverRef}>
+                    {statusDevices.length === 0 ? (
+                      <div className="dash-device-status-badge offline">
+                        <span className="status-dot offline" />
+                        <span className="status-label">Device · Offline</span>
+                      </div>
+                    ) : (
+                      <>
+                        {(statusDevices.length > MAX_VISIBLE_STATUS
+                          ? statusDevices.slice(0, MAX_VISIBLE_STATUS - 1)
+                          : statusDevices
+                        ).map((d) => {
+                          const online = d.status === "online";
+                          return (
+                            <div key={d.id} className={`dash-device-status-badge ${online ? "online" : "offline"}`}>
+                              <span className={`status-dot ${online ? "online" : "offline"}`} />
+                              <span className="status-label">
+                                <TruncatedName name={d.name} max={10} align="right" /> · {online ? "Online" : "Offline"}
+                              </span>
+                            </div>
+                          );
+                        })}
+                        {statusDevices.length > MAX_VISIBLE_STATUS && (
+                          <button
+                            type="button"
+                            className="dash-status-see-all"
+                            aria-expanded={showAllStatus}
+                            onClick={() => setShowAllStatus((v) => !v)}
+                          >
+                            Lihat semua device
+                          </button>
+                        )}
+                        {showAllStatus && statusDevices.length > MAX_VISIBLE_STATUS && (
+                          <div className="dash-status-popover" role="dialog" aria-label="Status semua device">
+                            <div className="dash-status-popover-title">
+                              Semua device ({statusDevices.length})
+                            </div>
+                            {statusDevices.map((d) => {
+                              const online = d.status === "online";
+                              return (
+                                <div key={d.id} className={`dash-device-status-badge ${online ? "online" : "offline"}`}>
+                                  <span className={`status-dot ${online ? "online" : "offline"}`} />
+                                  <span className="status-label">
+                                    <TruncatedName name={d.name} max={10} align="right" /> · {online ? "Online" : "Offline"}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -786,14 +908,30 @@ export default function DashboardContent() {
                   </p>
                 ) : (
                   <div className="device-radio-grid-2col">
-                    {devices.map((d) => (
-                      <label key={d.id} className="device-radio-item" onClick={() => setSelectedDeviceForNewDash(d.id)}>
-                        <span className={`custom-radio-circle ${selectedDeviceForNewDash === d.id ? "checked" : ""}`}>
-                          {selectedDeviceForNewDash === d.id && <span className="custom-radio-inner" />}
-                        </span>
-                        <span className="device-radio-label">{d.name}</span>
-                      </label>
-                    ))}
+                    {devices.map((d) => {
+                      const checked = selectedDevicesForNewDash.includes(d.id);
+                      return (
+                        <label
+                          key={d.id}
+                          className="device-radio-item"
+                          role="checkbox"
+                          aria-checked={checked}
+                          tabIndex={0}
+                          onClick={() => toggleDeviceForNewDash(d.id)}
+                          onKeyDown={(e) => {
+                            if (e.key === " " || e.key === "Enter") {
+                              e.preventDefault();
+                              toggleDeviceForNewDash(d.id);
+                            }
+                          }}
+                        >
+                          <span className={`custom-radio-circle ${checked ? "checked" : ""}`}>
+                            {checked && <span className="custom-radio-inner" />}
+                          </span>
+                          <span className="device-radio-label"><TruncatedName name={d.name} max={15} /></span>
+                        </label>
+                      );
+                    })}
                   </div>
                 )}
               </div>
