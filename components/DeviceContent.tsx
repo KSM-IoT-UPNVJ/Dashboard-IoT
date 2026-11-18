@@ -305,7 +305,8 @@ export default function DeviceContent() {
       if (dashData) {
         let matchedDashId = "";
         for (const [dashId, val] of Object.entries<any>(dashData)) {
-          if (val?.deviceId === selectedDevice.id) {
+          const dashDeviceIds: string[] = Array.isArray(val?.deviceIds) ? val.deviceIds : [];
+          if (val?.deviceId === selectedDevice.id || dashDeviceIds.includes(selectedDevice.id)) {
             matchedDashId = dashId;
             break;
           }

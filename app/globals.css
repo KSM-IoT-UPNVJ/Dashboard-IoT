@@ -1909,20 +1909,33 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .dash-pill-delete-btn { background: transparent; border: 0; color: rgba(255,255,255,.7); font-size: 11px; cursor: pointer; padding: 2px 6px; border-radius: 4px; }
 .dash-pill-delete-btn:hover { background: rgba(255,255,255,.2); color: #fff; }
 
-.dash-blynk-mainpane { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 20px; min-height: 540px; }
+.dash-blynk-mainpane { background: #fff; border: 1px solid #e5e7eb; border-radius: 14px; padding: 20px; min-height: 540px; min-width: 0; }
 
 /* Active Dashboard Header */
-.dash-active-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.dash-active-title { font-size: 18px; font-weight: 700; color: #111827; margin: 0; }
-.dash-active-meta { font-size: 12px; color: #6b7280; margin: 4px 0 0; }
+.dash-active-header { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: nowrap; margin-bottom: 16px; }
+.dash-active-info { flex: 1; min-width: 0; }
+.dash-active-title { font-size: 18px; font-weight: 700; color: #111827; margin: 0; overflow-wrap: anywhere; }
+.dash-active-meta { font-size: 12px; color: #6b7280; margin: 4px 0 0; overflow-wrap: anywhere; }
 
-.dash-active-actions { display: flex; align-items: center; gap: 12px; }
-.btn-dash-edit-pill { padding: 7px 18px; background: #0070f3; color: #fff; border: 0; border-radius: 9999px; font-weight: 600; font-size: 13px; cursor: pointer; transition: background .15s; }
+.dash-active-actions { display: flex; align-items: center; gap: 12px; flex-wrap: nowrap; flex-shrink: 0; }
+.btn-dash-edit-pill { padding: 7px 18px; background: #0070f3; color: #fff; border: 0; border-radius: 9999px; font-weight: 600; font-size: 13px; cursor: pointer; transition: background .15s; white-space: nowrap; flex-shrink: 0; }
 .btn-dash-edit-pill:hover { background: #005bb5; }
 .btn-dash-edit-pill.is-editing { background: #10b981; }
 
-.dash-device-status-badge { font-size: 12px; color: #10b981; font-weight: 600; display: flex; align-items: center; gap: 6px; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.dash-device-status-badge { font-size: 12px; color: #10b981; font-weight: 600; display: flex; align-items: center; gap: 6px; white-space: nowrap; flex-shrink: 0; }
+.dash-device-status-badge.offline { color: #ef4444; }
+.dash-device-status-list { position: relative; display: flex; flex-wrap: nowrap; justify-content: flex-end; align-items: center; gap: 12px; flex-shrink: 0; }
+.dash-status-see-all { border: 1px solid #bfdbfe; background: #eff6ff; color: #0070f3; font-size: 12px; font-weight: 600; padding: 3px 10px; border-radius: 9999px; cursor: pointer; white-space: nowrap; }
+.dash-status-see-all:hover { background: #dbeafe; }
+.dash-status-popover { position: absolute; top: calc(100% + 8px); right: 0; z-index: 40; min-width: 200px; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; box-shadow: 0 12px 28px rgba(0,0,0,.12); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+.dash-status-popover-title { font-size: 12px; font-weight: 700; color: #374151; padding-bottom: 6px; border-bottom: 1px solid #f3f4f6; }
+
+/* Truncated name with hover tooltip */
+.name-tooltip { position: relative; cursor: help; }
+.name-tooltip::after { content: attr(data-full); position: absolute; bottom: calc(100% + 6px); left: 0; background: #111827; color: #fff; font-size: 12px; font-weight: 500; padding: 4px 8px; border-radius: 6px; white-space: nowrap; opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .12s; z-index: 60; }
+.name-tooltip.align-right::after { left: auto; right: 0; }
+.name-tooltip:hover::after { opacity: 1; visibility: visible; }
+.status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
 .status-dot.online { background: #10b981; }
 .status-dot.offline { background: #ef4444; }
 
