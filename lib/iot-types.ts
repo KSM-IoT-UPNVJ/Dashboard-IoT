@@ -54,6 +54,9 @@ export interface DashboardItem {
   deviceIds?: string[];
   createdAt: number;
   widgets?: CanvasWidget[];
+  showOnLandingPage?: boolean;
+  ownerUid?: string;
+  ownerEmail?: string;
 }
 
 export const DATASTREAM_SUGGESTIONS = [

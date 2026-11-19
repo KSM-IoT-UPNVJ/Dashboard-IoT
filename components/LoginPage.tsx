@@ -177,12 +177,6 @@ export default function LoginPage() {
             <button className="login-submit-btn" type="submit" disabled={loading}>
               {loading ? "Signing in..." : "Sign In"}
             </button>
-
-            {/* Switch to Signup */}
-            <p className="login-signup-prompt">
-              Don&apos;t have an account?{" "}
-              <a href="/signup" className="login-signup-link">Sign Up</a>
-            </p>
           </form>
         </div>
       </section>
