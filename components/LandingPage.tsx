@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 
 const TEAM = [
@@ -23,6 +24,17 @@ const TEAM = [
 
 export default function LandingPage() {
   const router = useRouter();
+  const [showTeamEasterEgg, setShowTeamEasterEgg] = useState(false);
+
+  // Close easter egg on Escape key
+  useEffect(() => {
+    if (!showTeamEasterEgg) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setShowTeamEasterEgg(false);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [showTeamEasterEgg]);
 
   return (
     <div className="lp-root">
@@ -64,17 +76,14 @@ export default function LandingPage() {
             architectures, and edge intelligence prototypes directly from the student workbench.
           </p>
           <div className="lp-cta-row">
-            <button className="lp-btn lp-btn-primary" onClick={() => router.push("/signup")}>
-              SIGN UP
-            </button>
-            <button className="lp-btn lp-btn-outline" onClick={() => router.push("/login")}>
+            <button className="lp-btn lp-btn-primary lp-btn-signin-only" onClick={() => router.push("/login")}>
               SIGN IN
             </button>
           </div>
         </div>
       </section>
 
-      {/* ────── TEAM ────── */}
+      {/* ────── TEAM (Tampilan awal normal) ────── */}
       <section className="lp-team">
         <h2 className="lp-team-title">OUR TEAM</h2>
         <div className="lp-team-grid">
@@ -97,10 +106,84 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ────── FOOTER ────── */}
+      {/* ────── FOOTER DENGAN EASTER EGG ────── */}
       <footer className="lp-footer">
-        © {new Date().getFullYear()} KSM Internet Of Things — UPN &quot;Veteran&quot; Jakarta
+        <button
+          type="button"
+          className="lp-footer-easter-egg-btn"
+          onClick={() => setShowTeamEasterEgg(true)}
+          title="Klik rahasia: Temukan tim kami! ✨"
+        >
+          © {new Date().getFullYear()} KSM Internet Of Things — UPN &quot;Veteran&quot; Jakarta
+        </button>
       </footer>
+
+      {/* ────── MODAL EASTER EGG: OUR TEAM ────── */}
+      {showTeamEasterEgg && (
+        <div
+          className="lp-easter-modal-backdrop"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setShowTeamEasterEgg(false);
+          }}
+        >
+          <div className="lp-easter-modal-box" role="dialog" aria-modal="true">
+            {/* Modal Header */}
+            <div className="lp-easter-modal-header">
+              <div className="lp-easter-header-title-wrap">
+                <span className="lp-easter-badge">Easter Egg Found!</span>
+                <h2 className="lp-easter-title">Meet Our Team</h2>
+                <p className="lp-easter-subtitle">
+                  The talented builders, engineers, and designers behind KSM Internet Of Things
+                </p>
+              </div>
+              <button
+                type="button"
+                className="lp-easter-close-btn"
+                onClick={() => setShowTeamEasterEgg(false)}
+                aria-label="Tutup popup"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Team Grid */}
+            <div className="lp-easter-modal-body">
+              <div className="lp-team-grid lp-easter-team-grid">
+                {TEAM.map((member) => (
+                  <div key={member.name} className="lp-card lp-easter-card">
+                    <img
+                      src={member.img}
+                      alt={member.name}
+                      className="lp-card-img"
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).src = "/logo-placeholder.svg";
+                      }}
+                    />
+                    <div className="lp-card-overlay">
+                      <span className="lp-card-name">{member.name}</span>
+                      <span className="lp-card-role">{member.role}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="lp-easter-modal-footer">
+              <span className="lp-easter-footer-note">
+                KSM Internet of Things 2026
+              </span>
+              <button
+                type="button"
+                className="lp-easter-done-btn"
+                onClick={() => setShowTeamEasterEgg(false)}
+              >
+                Tutup
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
