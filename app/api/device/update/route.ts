@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ref, get, update } from "firebase/database";
+import { ref, get, update, push, set } from "firebase/database";
 import { rtdb } from "@/lib/firebase";
 
 // Helper to look up device by authToken
@@ -35,6 +35,13 @@ async function findDeviceByToken(token: string) {
   }
 
   return null;
+}
+
+// Helper to push a history entry for each pin update
+async function pushHistory(uid: string, deviceId: string, pin: string, value: any, timestamp: number) {
+  const historyRef = ref(rtdb, `users/${uid}/devices/${deviceId}/history/${pin}`);
+  const newEntry = push(historyRef);
+  await set(newEntry, { value, timestamp });
 }
 
 export async function POST(req: NextRequest) {
@@ -75,16 +82,21 @@ export async function POST(req: NextRequest) {
       [`users/${uid}/devices/${deviceId}/lastSeen`]: now,
     };
 
+    // Collect pins that were updated for history tracking
+    const updatedPins: { pin: string; value: any }[] = [];
+
     // Support batch pins update: e.g. { pins: { V1: 60.5, V3: 27.4 } }
     if (body.pins && typeof body.pins === "object") {
       for (const [pin, val] of Object.entries(body.pins)) {
         updates[`users/${uid}/devices/${deviceId}/datastreams/${pin}/value`] = val;
+        updatedPins.push({ pin, value: val });
       }
     }
 
     // Support single pin update: e.g. { pin: "V3", value: 27.4 }
     if (body.pin) {
       updates[`users/${uid}/devices/${deviceId}/datastreams/${body.pin}/value`] = body.value;
+      updatedPins.push({ pin: body.pin, value: body.value });
     }
 
     // Also support query param: ?pin=V3&value=27.4
@@ -93,9 +105,16 @@ export async function POST(req: NextRequest) {
     if (qPin && qVal !== null) {
       const numVal = isNaN(Number(qVal)) ? qVal : Number(qVal);
       updates[`users/${uid}/devices/${deviceId}/datastreams/${qPin}/value`] = numVal;
+      updatedPins.push({ pin: qPin, value: numVal });
     }
 
     await update(ref(rtdb), updates);
+
+    // Push history entries for all updated pins (non-blocking)
+    const historyPromises = updatedPins.map((p) =>
+      pushHistory(uid, deviceId, p.pin, p.value, now)
+    );
+    await Promise.all(historyPromises);
 
     return NextResponse.json({
       success: true,

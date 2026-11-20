@@ -7,6 +7,7 @@ import { auth, rtdb } from "@/lib/firebase";
 import { CanvasWidget, Datastream, DeviceItem, WidgetType } from "@/lib/iot-types";
 import WidgetSettingsModal from "./WidgetSettingsModal";
 import NewDatastreamModal from "./NewDatastreamModal";
+import RealtimeChart from "./RealtimeChart";
 
 interface DashboardItem {
   id: string;
@@ -630,31 +631,18 @@ export default function DashboardContent() {
                                 </div>
                               )}
 
-                              {/* CHART */}
+                              {/* CHART - Dynamic Realtime */}
                               {w.type === "chart" && (
                                 <div className="render-chart-block">
                                   <div className="widget-chart-clean-view">
-                                    <svg className="blynk-chart-svg" viewBox="0 0 500 100" preserveAspectRatio="none">
-                                      <defs>
-                                        <linearGradient id={`grad_${w.id}`} x1="0" y1="0" x2="0" y2="1">
-                                          <stop offset="0%" stopColor="#0070f3" stopOpacity="0.2" />
-                                          <stop offset="100%" stopColor="#0070f3" stopOpacity="0.0" />
-                                        </linearGradient>
-                                      </defs>
-                                      <path
-                                        d="M0,70 Q100,50 200,60 T350,45 T500,55 L500,100 L0,100 Z"
-                                        fill={`url(#grad_${w.id})`}
-                                      />
-                                      <path
-                                        d="M0,70 Q100,50 200,60 T350,45 T500,55"
-                                        fill="none"
-                                        stroke="#0070f3"
-                                        strokeWidth="2.5"
-                                      />
-                                    </svg>
-                                    <div className="chart-val-footer">
-                                      <span>Current: {currentVal ?? "--"} {currentDs?.unit || ""}</span>
-                                    </div>
+                                    <RealtimeChart
+                                      uid={user?.uid || ""}
+                                      deviceId={w.deviceId || ""}
+                                      vpin={w.vpin || ""}
+                                      widgetId={w.id}
+                                      unit={currentDs?.unit || w.unit || ""}
+                                      timeRange={timeRange}
+                                    />
                                   </div>
                                 </div>
                               )}
