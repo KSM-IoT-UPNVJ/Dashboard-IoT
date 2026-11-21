@@ -81,10 +81,12 @@ export default function NewDatastreamModal({ existingPins = [], initialPin, onCl
       semantic: semanticTag,
       unit,
       useScaling,
-      rawMin: useScaling ? Number(rawMin) : undefined,
-      rawMax: useScaling ? Number(rawMax) : undefined,
-      scaledMin: useScaling ? Number(scaledMin) : undefined,
-      scaledMax: useScaling ? Number(scaledMax) : undefined,
+      ...(useScaling ? {
+        rawMin: Number(rawMin),
+        rawMax: Number(rawMax),
+        scaledMin: Number(scaledMin),
+        scaledMax: Number(scaledMax),
+      } : {}),
       value: defaultValue !== "" ? (dataType === "String" ? defaultValue : Number(defaultValue)) : 0,
     };
     onSave(newDs);

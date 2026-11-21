@@ -1332,7 +1332,7 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .render-label-row { padding: 6px 0 10px; }
 .label-large-text { font-size: 32px; font-weight: 800; color: #111827; }
 
-.render-chart-block { width: 100%; height: 130px; }
+.render-chart-block { width: 100%; min-height: 140px; }
 .blynk-chart-svg { width: 100%; height: 100%; }
 
 .render-image-block { display: flex; justify-content: center; align-items: center; padding: 10px 0; }
@@ -2102,6 +2102,22 @@ button, a { -webkit-tap-highlight-color: transparent; }
 .unit-select-symbol { font-size: 11px; color: #6b7280; }
 .unit-select-empty { padding: 12px; font-size: 12px; color: #9ca3af; text-align: center; }
 
+/* ── Realtime Chart Component (Chart.js) ── */
+.realtime-chart-wrapper {
+  width: 100%;
+  position: relative;
+}
+.realtime-chart-container {
+  width: 100%;
+  height: 140px;
+  position: relative;
+}
+.realtime-chart-empty {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 140px;
+}
 
 /* ═══════════════════════════════════════════════════════════════
    LANDING PAGE: SIGN IN & FOOTER EASTER EGG (OUR TEAM POPUP)
