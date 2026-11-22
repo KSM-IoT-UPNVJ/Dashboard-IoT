@@ -148,7 +148,7 @@ export default function SignupPage() {
                       <option value="" disabled>Select Division</option>
                       {DIVISIONS.map((d) => <option key={d} value={d}>{d}</option>)}
                     </select>
-                    <svg className="auth-select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
+                    <img src="/icons/chevron-down.svg" alt="" className="auth-select-chevron" style={{ width: 14, height: 14 }} />
                   </div>
                 </div>
                 <div className="auth-field">
@@ -158,7 +158,7 @@ export default function SignupPage() {
                       <option value="" disabled>Select Position</option>
                       {POSITIONS.map((p) => <option key={p} value={p}>{p}</option>)}
                     </select>
-                    <svg className="auth-select-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M6 9l6 6 6-6"/></svg>
+                    <img src="/icons/chevron-down.svg" alt="" className="auth-select-chevron" style={{ width: 14, height: 14 }} />
                   </div>
                 </div>
               </div>

@@ -43,6 +43,7 @@ interface RealtimeChartProps {
   widgetId: string;
   unit?: string;
   timeRange: "Live" | "1h" | "1d" | "1w" | "1mo";
+  simulatedData?: HistoryEntry[];
 }
 
 function getTimeRangeMs(range: string): number {
@@ -78,13 +79,21 @@ function getTimeDisplayFormats(range: string): string {
   }
 }
 
-export default function RealtimeChart({ uid, deviceId, vpin, widgetId, unit, timeRange }: RealtimeChartProps) {
+export default function RealtimeChart({ uid, deviceId, vpin, widgetId, unit, timeRange, simulatedData }: RealtimeChartProps) {
   const [data, setData] = useState<HistoryEntry[]>([]);
   const chartRef = useRef<ChartJS<"line"> | null>(null);
 
-  // Subscribe to history data from Firebase in realtime
+  // Sync simulated data if provided
   useEffect(() => {
-    if (!uid || !deviceId || !vpin) return;
+    if (simulatedData) {
+      setData(simulatedData);
+    }
+  }, [simulatedData]);
+
+  // Subscribe to history data from Firebase in realtime (for real devices)
+  useEffect(() => {
+    if (simulatedData) return;
+    if (!uid || !deviceId || !vpin || uid === "public_ksm") return;
 
     const historyPath = `users/${uid}/devices/${deviceId}/history/${vpin}`;
     const historyQuery = query(
@@ -93,34 +102,41 @@ export default function RealtimeChart({ uid, deviceId, vpin, widgetId, unit, tim
       limitToLast(500)
     );
 
-    const unsub = onValue(historyQuery, (snapshot) => {
-      if (!snapshot.exists()) {
+    const unsub = onValue(
+      historyQuery,
+      (snapshot) => {
+        if (!snapshot.exists()) {
+          setData([]);
+          return;
+        }
+        const raw = snapshot.val();
+        const entries: HistoryEntry[] = Object.values(raw)
+          .map((e: any) => ({
+            value: typeof e.value === "number" ? e.value : Number(e.value) || 0,
+            timestamp: e.timestamp,
+          }))
+          .sort((a, b) => a.timestamp - b.timestamp);
+        setData(entries);
+      },
+      (error) => {
+        console.warn("RealtimeChart subscription notice:", error.message);
         setData([]);
-        return;
       }
-      const raw = snapshot.val();
-      const entries: HistoryEntry[] = Object.values(raw)
-        .map((e: any) => ({
-          value: typeof e.value === "number" ? e.value : Number(e.value) || 0,
-          timestamp: e.timestamp,
-        }))
-        .sort((a, b) => a.timestamp - b.timestamp);
-      setData(entries);
-    });
+    );
 
     return () => unsub();
-  }, [uid, deviceId, vpin]);
+  }, [uid, deviceId, vpin, simulatedData]);
 
-  // Filter data by time range
+  // Filter data by time range (for simulated data, show points directly)
   const now = Date.now();
   const rangeMs = getTimeRangeMs(timeRange);
   const cutoff = now - rangeMs;
-  const filtered = data.filter((d) => d.timestamp >= cutoff);
+  const filtered = simulatedData && simulatedData.length > 0 ? simulatedData : data.filter((d) => d.timestamp >= cutoff);
 
   // Current value
   const currentVal = filtered.length > 0 ? filtered[filtered.length - 1].value : null;
 
-  if (!uid || !deviceId || !vpin) {
+  if (!simulatedData && (!uid || !deviceId || !vpin)) {
     return (
       <div className="realtime-chart-empty">
         <span style={{ color: "#9ca3af", fontSize: 12 }}>
@@ -209,7 +225,7 @@ export default function RealtimeChart({ uid, deviceId, vpin, widgetId, unit, tim
           },
           tooltipFormat: "PPpp",
         },
-        min: cutoff,
+        min: simulatedData && simulatedData.length > 0 ? Math.min(simulatedData[0].timestamp, cutoff) : cutoff,
         max: now,
         grid: {
           color: "rgba(0,0,0,0.05)",

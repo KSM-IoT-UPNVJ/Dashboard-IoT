@@ -185,10 +185,7 @@ export default function SettingsPage() {
             {photoUrl ? (
               <img src={photoUrl} alt="Avatar" className="overview-avatar-img" />
             ) : (
-              <svg viewBox="0 0 24 24" fill="none" stroke="#0070f3" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                <circle cx="12" cy="7" r="4" />
-              </svg>
+              <img src="/icons/profile-circle.svg" alt="Avatar" className="overview-avatar-img" style={{ padding: 4 }} />
             )}
           </div>
           <div>
