@@ -16,6 +16,7 @@ import {
 } from "@/lib/iot-types";
 import WidgetSettingsModal from "./WidgetSettingsModal";
 import NewDatastreamModal from "./NewDatastreamModal";
+import RealtimeChart from "./RealtimeChart";
 
 const LEGACY_TEMPLATE_NAMES = [
   "pembacaan pH",
@@ -36,6 +37,7 @@ export default function DeviceContent() {
 
   // View mode: "list" | "detail" | "editWidgets"
   const [viewMode, setViewMode] = useState<"list" | "detail" | "editWidgets">("list");
+  const [timeRange, setTimeRange] = useState<"Live" | "1h" | "1d" | "1w" | "1mo">("1d");
 
   // New Device Modal (Gambar 2)
   const [showAddModal, setShowAddModal] = useState(false);
@@ -65,10 +67,48 @@ export default function DeviceContent() {
   const [searchQuery, setSearchQuery] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
 
+  // Sorting state for Device List table (Default: Newest created on top)
+  const [sortField, setSortField] = useState<"name" | "token" | "owner" | "status" | "default">("default");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // Device Name duplicate error message
+  const [nameError, setNameError] = useState("");
+
+  // User Profile for clean display name
+  const [userProfile, setUserProfile] = useState<{ fullName?: string; name?: string } | null>(null);
+
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
       setUser(u);
     });
+  }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    const profRef = ref(rtdb, `users/${user.uid}/profile`);
+    return onValue(profRef, (snap) => {
+      if (snap.exists()) {
+        setUserProfile(snap.val());
+      }
+    });
+  }, [user]);
+
+  // Clean owner helper: show real name, if empty or email, use KSMIoT
+  const getCleanOwnerName = (rawOwner?: string) => {
+    const profName = (userProfile?.fullName || userProfile?.name || user?.displayName || "").trim();
+    if (profName && !profName.includes("@")) return profName;
+    if (rawOwner) {
+      const stripped = rawOwner.replace(/\s*\(you\)/gi, "").trim();
+      if (stripped && !stripped.includes("@")) return stripped;
+    }
+    return "KSMIoT";
+  };
+
+  // Heartbeat to automatically re-evaluate 30-minute online status
+  const [, setHeartbeat] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setHeartbeat((h) => h + 1), 30000);
+    return () => clearInterval(interval);
   }, []);
 
   // Fetch devices in realtime from Firebase RTDB
@@ -95,9 +135,21 @@ export default function DeviceContent() {
             }));
           }
         }
+
+        // 30-minute timeout: device is only online if data was received in the last 30 minutes
+        const last = Number(item.lastSeen || item.lastOnline || 0);
+        const isOnline = item.status === "online" && last > 0 && Date.now() - last <= 30 * 60 * 1000;
+        const effectiveStatus: "online" | "offline" = isOnline ? "online" : "offline";
+
+        // Auto-heal RTDB status if inactive for > 30 minutes
+        if (item.status === "online" && !isOnline && user) {
+          update(ref(rtdb, `users/${user.uid}/devices/${id}`), { status: "offline" }).catch(() => {});
+        }
+
         return {
           id,
           ...item,
+          status: effectiveStatus,
           widgets: wList,
           datastreams: item.datastreams || {},
         };
@@ -116,7 +168,19 @@ export default function DeviceContent() {
   // Create a brand new device (Gambar 2)
   const handleCreateDevice = async () => {
     if (!user || !newDevName.trim()) return;
+
+    // Device name cannot be identical to another device within the same account
+    const trimmedName = newDevName.trim();
+    const isDuplicate = devices.some(
+      (d) => d.name.trim().toLowerCase() === trimmedName.toLowerCase()
+    );
+    if (isDuplicate) {
+      setNameError(`Nama device "${trimmedName}" sudah digunakan di akun Anda. Gunakan nama lain.`);
+      return;
+    }
+
     setCreating(true);
+    setNameError("");
     try {
       const token = newDevToken.trim() || genAuthToken();
       const devRef = ref(rtdb, `users/${user.uid}/devices`);
@@ -127,7 +191,7 @@ export default function DeviceContent() {
         name: newDevName.trim(),
         type: newDevBoard,
         authToken: token,
-        owner: `${user.email || "user@example.com"} (you)`,
+        owner: getCleanOwnerName(),
         status: "offline",
         lastSeen: null,
         createdAt: Date.now(),
@@ -397,9 +461,15 @@ export default function DeviceContent() {
   const handleWidgetValueChange = async (vpin: string, val: number | string) => {
     if (!user || !selectedDevice || !vpin) return;
     try {
+      const now = Date.now();
       await update(ref(rtdb, `users/${user.uid}/devices/${selectedDevice.id}/datastreams/${vpin}`), {
         value: val,
+        updatedAt: now,
       });
+      // Best-effort push history for chart
+      const historyRef = ref(rtdb, `users/${user.uid}/devices/${selectedDevice.id}/history/${vpin}`);
+      const newEntry = push(historyRef);
+      await set(newEntry, { value: Number(val) || 0, timestamp: now });
     } catch (err) {
       console.error(err);
     }
@@ -426,15 +496,87 @@ export default function DeviceContent() {
     }
   };
 
-  // Filter & Pagination
+  // Extract creation time for sorting (supports explicit createdAt or Firebase push ID timestamp)
+  const getDeviceCreationTime = (d: DeviceItem): number => {
+    if (d.createdAt && typeof d.createdAt === "number") return d.createdAt;
+    if (d.id && d.id.startsWith("-") && d.id.length >= 8) {
+      const PUSH_CHARS = "-0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz";
+      let time = 0;
+      for (let i = 1; i < 9; i++) {
+        const c = d.id.charAt(i);
+        const idx = PUSH_CHARS.indexOf(c);
+        if (idx === -1) break;
+        time = time * 64 + idx;
+      }
+      if (time > 1600000000000 && time < 2500000000000) {
+        return time;
+      }
+    }
+    return 0;
+  };
+
+  const handleSort = (field: "name" | "token" | "owner" | "status") => {
+    if (sortField === field) {
+      // Toggle direction if already clicked
+      setSortDir((prev) => (prev === "asc" ? "desc" : "asc"));
+    } else {
+      setSortField(field);
+      setSortDir("asc");
+    }
+    setCurrentPage(1);
+  };
+
+  // Filter & Sorting
   const filteredDevices = devices.filter((d) =>
     (d.name || "").toLowerCase().includes(searchQuery.toLowerCase()) ||
     (d.authToken || "").toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const totalPages = Math.ceil(filteredDevices.length / PAGE_SIZE) || 1;
+  // Sorting logic based on user rules
+  const sortedDevices = [...filteredDevices].sort((a, b) => {
+    const timeA = getDeviceCreationTime(a);
+    const timeB = getDeviceCreationTime(b);
+
+    // 1. Device Name: Urutkan sesuai abjad
+    if (sortField === "name") {
+      const cmp = a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
+      return sortDir === "asc" ? cmp : -cmp;
+    }
+
+    // 2. Auth Token: Urutkan abjad awal auth token, jika sama abjad berikutnya
+    if (sortField === "token") {
+      const tokenA = (a.authToken || "").toLowerCase();
+      const tokenB = (b.authToken || "").toLowerCase();
+      const cmp = tokenA.localeCompare(tokenB);
+      return sortDir === "asc" ? cmp : -cmp;
+    }
+
+    // 3. Device Owner: Urutkan waktu pembuatan, paling baru dibuat di paling atas
+    if (sortField === "owner") {
+      return sortDir === "asc" ? timeB - timeA : timeA - timeB;
+    }
+
+    // 4. Status: Utamakan online, jika ada yang sama-sama online/offline, paling akhir dibuat di paling atas
+    if (sortField === "status") {
+      const statusA = a.status === "online" ? 1 : 0;
+      const statusB = b.status === "online" ? 1 : 0;
+
+      if (sortDir === "asc") {
+        if (statusA !== statusB) return statusB - statusA; // online (1) first
+        return timeB - timeA; // newer first
+      } else {
+        if (statusA !== statusB) return statusA - statusB; // offline first
+        return timeA - timeB; // older first
+      }
+    }
+
+    // 5. Default: Paling atas yang paling baru dibuat
+    return timeB - timeA;
+  });
+
+  const totalPages = Math.ceil(sortedDevices.length / PAGE_SIZE) || 1;
   const startIndex = (currentPage - 1) * PAGE_SIZE;
-  const paginatedDevices = filteredDevices.slice(startIndex, startIndex + PAGE_SIZE);
+  const paginatedDevices = sortedDevices.slice(startIndex, startIndex + PAGE_SIZE);
 
   if (loading) {
     return <div className="page-loading">Loading devices…</div>;
@@ -632,14 +774,14 @@ export default function DeviceContent() {
                             title="Configure Datastream / Title"
                             onClick={() => setActiveWidgetForModal(w)}
                           >
-                            ⚙️
+                            <img src="/icons/sidebar-settings.svg" alt="Config" style={{ width: 14, height: 14 }} />
                           </button>
                           <button
                             className="btn-card-trash"
                             title="Delete"
                             onClick={() => removeWidgetFromCanvas(w.id)}
                           >
-                            ✕
+                            <img src="/icons/action-trash.svg" alt="Delete" style={{ width: 14, height: 14 }} />
                           </button>
                         </div>
                       </div>
@@ -691,21 +833,14 @@ export default function DeviceContent() {
                         {w.type === "chart" && (
                           <div className="render-chart-block">
                             <div className="widget-chart-clean-view">
-                              <svg className="blynk-chart-svg" viewBox="0 0 500 100" preserveAspectRatio="none">
-                                <path
-                                  d="M0,70 Q100,50 200,60 T350,45 T500,55 L500,100 L0,100 Z"
-                                  fill="rgba(0,112,243,0.12)"
-                                />
-                                <path
-                                  d="M0,70 Q100,50 200,60 T350,45 T500,55"
-                                  fill="none"
-                                  stroke="#0070f3"
-                                  strokeWidth="2.5"
-                                />
-                              </svg>
-                              <div className="chart-val-footer">
-                                <span>Nilai: {currentVal ?? "--"} {currentDs?.unit || ""}</span>
-                              </div>
+                              <RealtimeChart
+                                uid={user?.uid || ""}
+                                deviceId={selectedDevice?.id || ""}
+                                vpin={w.vpin || ""}
+                                widgetId={w.id}
+                                unit={currentDs?.unit || w.unit || ""}
+                                timeRange={timeRange}
+                              />
                             </div>
                           </div>
                         )}
@@ -713,13 +848,21 @@ export default function DeviceContent() {
                         {/* IMAGE */}
                         {w.type === "image" && (
                           <div className="render-image-block">
-                            <div className="image-mock-esp32">
-                              <span className="dot-pin p-tl" />
-                              <span className="dot-pin p-tr" />
-                              <span className="dot-pin p-bl" />
-                              <span className="dot-pin p-br" />
-                              <div className="esp-chip-core">{selectedDevice.type || "ESP32"}</div>
-                            </div>
+                            {typeof currentVal === "string" && (currentVal.startsWith("http") || currentVal.startsWith("data:image")) ? (
+                              <img
+                                src={currentVal}
+                                alt={w.title}
+                                style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }}
+                              />
+                            ) : (
+                              <div className="image-mock-esp32">
+                                <span className="dot-pin p-tl" />
+                                <span className="dot-pin p-tr" />
+                                <span className="dot-pin p-bl" />
+                                <span className="dot-pin p-br" />
+                                <div className="esp-chip-core">{selectedDevice.type || "ESP32"}</div>
+                              </div>
+                            )}
                           </div>
                         )}
 
@@ -737,18 +880,29 @@ export default function DeviceContent() {
                                     <th>Pin</th>
                                     <th>Sensor</th>
                                     <th>Value</th>
+                                    <th>Waktu</th>
                                   </tr>
                                 </thead>
                                 <tbody>
-                                  {Object.entries(ds).map(([pin, stream]) => (
-                                    <tr key={pin}>
-                                      <td>{pin}</td>
-                                      <td>{stream.displayName || stream.name}</td>
-                                      <td>
-                                        {stream.value !== undefined ? String(stream.value) : "—"} {stream.unit || ""}
-                                      </td>
-                                    </tr>
-                                  ))}
+                                  {Object.entries(ds).map(([pin, stream]) => {
+                                    const timeStr = (stream as any).updatedAt
+                                      ? new Date((stream as any).updatedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                                      : selectedDevice.lastSeen
+                                      ? new Date(selectedDevice.lastSeen).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                                      : "--:--:--";
+                                    return (
+                                      <tr key={pin}>
+                                        <td>{pin}</td>
+                                        <td>{stream.displayName || stream.name}</td>
+                                        <td>
+                                          {stream.value !== undefined ? String(stream.value) : "—"} {stream.unit || ""}
+                                        </td>
+                                        <td style={{ fontSize: 11, color: "#6b7280", fontFamily: "monospace" }}>
+                                          {timeStr}
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
                                 </tbody>
                               </table>
                             )}
@@ -758,10 +912,32 @@ export default function DeviceContent() {
                         {/* VIDEO */}
                         {w.type === "video" && (
                           <div className="render-video-block">
-                            <div className="video-camera-screen">
-                              <div className="camera-live-badge">LIVE</div>
-                              <div className="camera-footer-info">CAM-01</div>
-                            </div>
+                            {typeof currentVal === "string" && (currentVal.startsWith("http") || currentVal.includes("youtube.com") || currentVal.includes("youtu.be")) ? (
+                              <div className="video-camera-screen" style={{ position: "relative", overflow: "hidden" }}>
+                                {currentVal.includes("youtube.com") || currentVal.includes("youtu.be") ? (
+                                  <iframe
+                                    src={currentVal.includes("embed") ? currentVal : currentVal.replace("watch?v=", "embed/")}
+                                    title={w.title}
+                                    style={{ width: "100%", height: "100%", border: "none" }}
+                                    allow="autoplay; encrypted-media"
+                                    allowFullScreen
+                                  />
+                                ) : (
+                                  <img
+                                    src={currentVal}
+                                    alt="Live stream"
+                                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                  />
+                                )}
+                                <div className="camera-live-badge">LIVE</div>
+                                <div className="camera-footer-info">CAM-01</div>
+                              </div>
+                            ) : (
+                              <div className="video-camera-screen">
+                                <div className="camera-live-badge">LIVE</div>
+                                <div className="camera-footer-info">CAM-01</div>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -819,9 +995,7 @@ export default function DeviceContent() {
             }}
             title="Kembali ke Device List"
           >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" className="back-arrow-svg">
-              <path d="M19 12H5M12 19l-7-7 7-7" />
-            </svg>
+            <img src="/icons/back.svg" alt="Back" style={{ width: 18, height: 18 }} />
           </button>
           <div className="dev-breadcrumb-path">
             <span
@@ -843,10 +1017,7 @@ export default function DeviceContent() {
           <div className="dev-card-left-group">
             {/* Chip Avatar Icon */}
             <div className="dev-chip-icon-box">
-              <svg viewBox="0 0 24 24" fill="none" stroke="#0070f3" strokeWidth="2" className="dev-chip-icon-svg">
-                <rect x="5" y="5" width="14" height="14" rx="2" />
-                <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3" />
-              </svg>
+              <img src="/icons/sidebar-device.svg" alt="Device" style={{ width: 22, height: 22 }} />
             </div>
 
             {/* Info Texts */}
@@ -860,11 +1031,15 @@ export default function DeviceContent() {
 
               <div className="dev-meta-line">
                 <span className="meta-text">
-                  Owner <strong>{selectedDevice.owner || user?.email || "member@upnvj.ac.id (you)"}</strong>
+                  Owner <strong>{getCleanOwnerName(selectedDevice.owner)}</strong>
                 </span>
                 <span className="meta-sep" />
                 <span className="meta-text">
                   Board <strong>{selectedDevice.type || "ESP32"}</strong>
+                </span>
+                <span className="meta-sep" />
+                <span className="meta-text">
+                  Data Masuk: <strong>{selectedDevice.lastSeen ? new Date(selectedDevice.lastSeen).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "Belum ada"}</strong>
                 </span>
               </div>
 
@@ -970,7 +1145,21 @@ export default function DeviceContent() {
               </div>
             </div>
           ) : (
-            <div className="canvas-widgets-grid">
+            <div>
+              {widgets.some((w) => w.type === "chart") && (
+                <div className="dash-timerange-bar" style={{ marginBottom: 16 }}>
+                  {(["Live", "1h", "1d", "1w", "1mo"] as const).map((r) => (
+                    <button
+                      key={r}
+                      className={`dash-time-pill ${timeRange === r ? "active" : ""}`}
+                      onClick={() => setTimeRange(r)}
+                    >
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className="canvas-widgets-grid">
               {widgets.map((w) => {
                 const currentDs = w.vpin ? ds[w.vpin] : null;
                 const currentVal = currentDs?.value !== undefined ? currentDs.value : w.value;
@@ -1033,21 +1222,14 @@ export default function DeviceContent() {
                       {w.type === "chart" && (
                         <div className="render-chart-block">
                           <div className="widget-chart-clean-view">
-                            <svg className="blynk-chart-svg" viewBox="0 0 500 100" preserveAspectRatio="none">
-                              <path
-                                d="M0,70 Q100,50 200,60 T350,45 T500,55 L500,100 L0,100 Z"
-                                fill="rgba(0,112,243,0.12)"
-                              />
-                              <path
-                                d="M0,70 Q100,50 200,60 T350,45 T500,55"
-                                fill="none"
-                                stroke="#0070f3"
-                                strokeWidth="2.5"
-                              />
-                            </svg>
-                            <div className="chart-val-footer">
-                              <span>Nilai: {currentVal ?? "--"} {currentDs?.unit || ""}</span>
-                            </div>
+                            <RealtimeChart
+                              uid={user?.uid || ""}
+                              deviceId={selectedDevice?.id || ""}
+                              vpin={w.vpin || ""}
+                              widgetId={w.id}
+                              unit={currentDs?.unit || w.unit || ""}
+                              timeRange={timeRange}
+                            />
                           </div>
                         </div>
                       )}
@@ -1055,13 +1237,21 @@ export default function DeviceContent() {
                       {/* IMAGE */}
                       {w.type === "image" && (
                         <div className="render-image-block">
-                          <div className="image-mock-esp32">
-                            <span className="dot-pin p-tl" />
-                            <span className="dot-pin p-tr" />
-                            <span className="dot-pin p-bl" />
-                            <span className="dot-pin p-br" />
-                            <div className="esp-chip-core">{selectedDevice.type || "ESP32"}</div>
-                          </div>
+                          {typeof currentVal === "string" && (currentVal.startsWith("http") || currentVal.startsWith("data:image")) ? (
+                            <img
+                              src={currentVal}
+                              alt={w.title}
+                              style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }}
+                            />
+                          ) : (
+                            <div className="image-mock-esp32">
+                              <span className="dot-pin p-tl" />
+                              <span className="dot-pin p-tr" />
+                              <span className="dot-pin p-bl" />
+                              <span className="dot-pin p-br" />
+                              <div className="esp-chip-core">{selectedDevice.type || "ESP32"}</div>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -1098,12 +1288,14 @@ export default function DeviceContent() {
                                         style={{
                                           background: "transparent",
                                           border: "none",
-                                          color: "#ef4444",
                                           cursor: "pointer",
                                           padding: 2,
+                                          display: "flex",
+                                          alignItems: "center",
+                                          justifyContent: "center"
                                         }}
                                       >
-                                        🗑
+                                        <img src="/icons/action-trash.svg" alt="Hapus" style={{ width: 14, height: 14 }} />
                                       </button>
                                     </td>
                                   </tr>
@@ -1117,16 +1309,39 @@ export default function DeviceContent() {
                       {/* VIDEO */}
                       {w.type === "video" && (
                         <div className="render-video-block">
-                          <div className="video-camera-screen">
-                            <div className="camera-live-badge">LIVE</div>
-                            <div className="camera-footer-info">CAM-01</div>
-                          </div>
+                          {typeof currentVal === "string" && (currentVal.startsWith("http") || currentVal.includes("youtube.com") || currentVal.includes("youtu.be")) ? (
+                            <div className="video-camera-screen" style={{ position: "relative", overflow: "hidden" }}>
+                              {currentVal.includes("youtube.com") || currentVal.includes("youtu.be") ? (
+                                <iframe
+                                  src={currentVal.includes("embed") ? currentVal : currentVal.replace("watch?v=", "embed/")}
+                                  title={w.title}
+                                  style={{ width: "100%", height: "100%", border: "none" }}
+                                  allow="autoplay; encrypted-media"
+                                  allowFullScreen
+                                />
+                              ) : (
+                                <img
+                                  src={currentVal}
+                                  alt="Live stream"
+                                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                />
+                              )}
+                              <div className="camera-live-badge">LIVE</div>
+                              <div className="camera-footer-info">CAM-01</div>
+                            </div>
+                          ) : (
+                            <div className="video-camera-screen">
+                              <div className="camera-live-badge">LIVE</div>
+                              <div className="camera-footer-info">CAM-01</div>
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
                   </div>
                 );
               })}
+            </div>
             </div>
           )}
         </div>
@@ -1152,6 +1367,7 @@ export default function DeviceContent() {
           className="btn-new-device-blue"
           onClick={() => {
             setNewDevName("");
+            setNameError("");
             setNewDevBoard("Arduino");
             setNewDevToken(genAuthToken());
             setShowAddModal(true);
@@ -1166,10 +1382,90 @@ export default function DeviceContent() {
         <table className="device-modern-table">
           <thead>
             <tr>
-              <th className="col-name">Device Name ⬍</th>
-              <th className="col-token">Auth Token ⬍</th>
-              <th className="col-owner">Device Owner ⬍</th>
-              <th className="col-status">Status ⬍</th>
+              <th
+                className="col-name"
+                onClick={() => handleSort("name")}
+                style={{ cursor: "pointer", userSelect: "none" }}
+                title="Urutkan berdasarkan abjad nama device"
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Device Name
+                  <img
+                    src="/icons/sort-arrow.svg"
+                    alt=""
+                    style={{
+                      width: 12,
+                      height: 12,
+                      transform: sortField === "name" && sortDir === "desc" ? "rotate(180deg)" : "none",
+                      opacity: sortField === "name" ? 1 : 0.45,
+                      transition: "transform 0.2s, opacity 0.2s",
+                    }}
+                  />
+                </span>
+              </th>
+              <th
+                className="col-token"
+                onClick={() => handleSort("token")}
+                style={{ cursor: "pointer", userSelect: "none" }}
+                title="Urutkan berdasarkan abjad Auth Token"
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Auth Token
+                  <img
+                    src="/icons/sort-arrow.svg"
+                    alt=""
+                    style={{
+                      width: 12,
+                      height: 12,
+                      transform: sortField === "token" && sortDir === "desc" ? "rotate(180deg)" : "none",
+                      opacity: sortField === "token" ? 1 : 0.45,
+                      transition: "transform 0.2s, opacity 0.2s",
+                    }}
+                  />
+                </span>
+              </th>
+              <th
+                className="col-owner"
+                onClick={() => handleSort("owner")}
+                style={{ cursor: "pointer", userSelect: "none" }}
+                title="Urutkan berdasarkan waktu pembuatan device (paling baru di atas)"
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Device Owner
+                  <img
+                    src="/icons/sort-arrow.svg"
+                    alt=""
+                    style={{
+                      width: 12,
+                      height: 12,
+                      transform: sortField === "owner" && sortDir === "desc" ? "rotate(180deg)" : "none",
+                      opacity: sortField === "owner" ? 1 : 0.45,
+                      transition: "transform 0.2s, opacity 0.2s",
+                    }}
+                  />
+                </span>
+              </th>
+              <th
+                className="col-status"
+                onClick={() => handleSort("status")}
+                style={{ cursor: "pointer", userSelect: "none" }}
+                title="Urutkan status: Online diutamakan, lalu terbaru"
+              >
+                <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                  Status
+                  <img
+                    src="/icons/sort-arrow.svg"
+                    alt=""
+                    style={{
+                      width: 12,
+                      height: 12,
+                      transform: sortField === "status" && sortDir === "desc" ? "rotate(180deg)" : "none",
+                      opacity: sortField === "status" ? 1 : 0.45,
+                      transition: "transform 0.2s, opacity 0.2s",
+                    }}
+                  />
+                </span>
+              </th>
               <th className="col-actions">Actions</th>
             </tr>
           </thead>
@@ -1196,7 +1492,7 @@ export default function DeviceContent() {
                       {d.authToken ? `${d.authToken.slice(0, 8)} - •••••` : "—"}
                     </span>
                   </td>
-                  <td className="cell-owner">{d.owner || user?.email || "owner"}</td>
+                  <td className="cell-owner">{getCleanOwnerName(d.owner)}</td>
                   <td className="cell-status">
                     <span className={`status-pill ${d.status}`}>
                       {d.status === "online" ? "Online" : "Offline"}
@@ -1211,10 +1507,7 @@ export default function DeviceContent() {
                         handleOpenEditWidgets(d);
                       }}
                     >
-                      {/* Pencil Icon */}
-                      <svg viewBox="0 0 20 20" fill="currentColor" className="action-icon-svg">
-                        <path d="M13.586 3.586a2 2 0 112.828 2.828l-.793.793-2.828-2.828.793-.793zM11.379 5.793L3 14.172V17h2.828l8.38-8.379-2.83-2.828z" />
-                      </svg>
+                      <img src="/icons/action-open.svg" alt="Edit" style={{ width: 16, height: 16 }} />
                     </button>
                     <button
                       className="btn-action-icon danger"
@@ -1224,14 +1517,7 @@ export default function DeviceContent() {
                         handlePromptDelete(d.id, d.name);
                       }}
                     >
-                      {/* Trash Icon */}
-                      <svg viewBox="0 0 20 20" fill="currentColor" className="action-icon-svg">
-                        <path
-                          fillRule="evenodd"
-                          d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z"
-                          clipRule="evenodd"
-                        />
-                      </svg>
+                      <img src="/icons/action-trash.svg" alt="Delete" style={{ width: 16, height: 16 }} />
                     </button>
                   </td>
                 </tr>
@@ -1254,7 +1540,9 @@ export default function DeviceContent() {
               className="btn-page-nav-pill"
               disabled={currentPage <= 1}
               onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
             >
+              <img src="/icons/caret-left.svg" alt="" style={{ width: 12, height: 12 }} />
               Previous
             </button>
             <button
@@ -1262,8 +1550,10 @@ export default function DeviceContent() {
               className="btn-page-nav-pill"
               disabled={currentPage >= totalPages || filteredDevices.length === 0}
               onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+              style={{ display: "inline-flex", alignItems: "center", gap: 4 }}
             >
               Next
+              <img src="/icons/caret-right.svg" alt="" style={{ width: 12, height: 12 }} />
             </button>
           </div>
         </div>
@@ -1280,17 +1570,35 @@ export default function DeviceContent() {
             </div>
 
             <div className="modal-body-form" style={{ marginTop: 18 }}>
-              {/* Project Name */}
+              {/* Device Name with Duplicate Prevention */}
               <div className="modal-input-group">
-                <label className="modal-label-bold">Project Name</label>
+                <label className="modal-label-bold">Device Name</label>
                 <input
                   type="text"
                   placeholder="e.g. Smart Greenhouse"
                   value={newDevName}
-                  onChange={(e) => setNewDevName(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setNewDevName(val);
+                    const trimmed = val.trim().toLowerCase();
+                    if (trimmed && devices.some((d) => d.name.trim().toLowerCase() === trimmed)) {
+                      setNameError(`Nama device "${val.trim()}" sudah ada di akun ini. Gunakan nama lain.`);
+                    } else {
+                      setNameError("");
+                    }
+                  }}
                   className="modal-text-input"
+                  style={{
+                    borderColor: nameError ? "#ef4444" : undefined,
+                    boxShadow: nameError ? "0 0 0 2px rgba(239,68,68,0.2)" : undefined,
+                  }}
                   autoFocus
                 />
+                {nameError && (
+                  <span style={{ color: "#ef4444", fontSize: 12, marginTop: 6, display: "flex", alignItems: "center", gap: 4 }}>
+                    ⚠️ {nameError}
+                  </span>
+                )}
               </div>
 
               {/* Board: Arduino & ESP32 Only (Gambar 2) */}
@@ -1359,7 +1667,7 @@ export default function DeviceContent() {
                 <button
                   type="button"
                   className="btn-modal-pill-next"
-                  disabled={!newDevName.trim() || creating}
+                  disabled={!newDevName.trim() || Boolean(nameError) || creating}
                   onClick={handleCreateDevice}
                 >
                   {creating ? "Creating..." : "Confirm"}

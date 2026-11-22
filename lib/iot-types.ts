@@ -19,6 +19,14 @@ export interface Datastream {
   scaledMin?: number;
   scaledMax?: number;
   value?: number | string;
+  // Optional extended configuration
+  recordHistory?: boolean;
+  historyRetention?: string;
+  enableExpiration?: boolean;
+  expirationTimeout?: string;
+  syncOnBoot?: boolean;
+  exposeToAutomations?: boolean;
+  notes?: string;
 }
 
 export interface CanvasWidget {
@@ -32,6 +40,14 @@ export interface CanvasWidget {
   min?: number;
   max?: number;
   value?: number | string;
+  // Optional extended configuration
+  recordHistory?: boolean;
+  historyRetention?: string;
+  enableExpiration?: boolean;
+  expirationTimeout?: string;
+  syncOnBoot?: boolean;
+  exposeToAutomations?: boolean;
+  notes?: string;
 }
 
 export interface DeviceItem {
@@ -42,6 +58,7 @@ export interface DeviceItem {
   owner: string;
   status: "online" | "offline";
   lastSeen: number | null;
+  lastOnline?: number | null;
   createdAt: number | null;
   datastreams?: Record<string, Datastream>;
   widgets?: CanvasWidget[];
@@ -54,6 +71,7 @@ export interface DashboardItem {
   deviceIds?: string[];
   createdAt: number;
   widgets?: CanvasWidget[];
+  isPublic?: boolean;
   showOnLandingPage?: boolean;
   ownerUid?: string;
   ownerEmail?: string;

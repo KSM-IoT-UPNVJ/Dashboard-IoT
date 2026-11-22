@@ -96,14 +96,7 @@ export default function NewDatastreamModal({ existingPins = [], initialPin, onCl
     { id: "general", label: "General" },
     { id: "semantic", label: "Semantic" },
     { id: "units", label: "Units" },
-    { id: "history", label: "History", disabled: true },
-    { id: "expiration", label: "Expiration", disabled: true },
-    { id: "sync", label: "Sync", disabled: true },
-    { id: "automations", label: "Automations", disabled: true },
-    { id: "visibility", label: "Visibility", disabled: true },
-    { id: "notes", label: "Notes", disabled: true },
-    { id: "api", label: "API reference", disabled: true },
-  ];
+  ] as const;
 
   return (
     <div className="blynk-modal-backdrop" onClick={onClose}>
@@ -122,9 +115,9 @@ export default function NewDatastreamModal({ existingPins = [], initialPin, onCl
               {sideMenu.map((item) => (
                 <button
                   key={item.id}
-                  disabled={item.disabled}
-                  className={`blynk-ds-nav-btn ${activeTab === item.id ? "active" : ""} ${item.disabled ? "disabled" : ""}`}
-                  onClick={() => !item.disabled && setActiveTab(item.id as "general" | "semantic" | "units")}
+                  type="button"
+                  className={`blynk-ds-nav-btn ${activeTab === item.id ? "active" : ""}`}
+                  onClick={() => setActiveTab(item.id)}
                 >
                   {item.label}
                 </button>
@@ -409,7 +402,7 @@ export default function NewDatastreamModal({ existingPins = [], initialPin, onCl
           <button className="ds-btn-cancel" onClick={onClose}>
             Back
           </button>
-          <button className="ds-btn-save-lime" onClick={handleSubmit}>
+          <button className="ds-btn-save-blue" onClick={handleSubmit}>
             Save
           </button>
         </div>

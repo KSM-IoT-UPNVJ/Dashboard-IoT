@@ -80,6 +80,7 @@ export async function POST(req: NextRequest) {
     const updates: Record<string, any> = {
       [`users/${uid}/devices/${deviceId}/status`]: "online",
       [`users/${uid}/devices/${deviceId}/lastSeen`]: now,
+      [`users/${uid}/devices/${deviceId}/lastOnline`]: now,
     };
 
     // Collect pins that were updated for history tracking
@@ -89,6 +90,7 @@ export async function POST(req: NextRequest) {
     if (body.pins && typeof body.pins === "object") {
       for (const [pin, val] of Object.entries(body.pins)) {
         updates[`users/${uid}/devices/${deviceId}/datastreams/${pin}/value`] = val;
+        updates[`users/${uid}/devices/${deviceId}/datastreams/${pin}/updatedAt`] = now;
         updatedPins.push({ pin, value: val });
       }
     }
@@ -96,6 +98,7 @@ export async function POST(req: NextRequest) {
     // Support single pin update: e.g. { pin: "V3", value: 27.4 }
     if (body.pin) {
       updates[`users/${uid}/devices/${deviceId}/datastreams/${body.pin}/value`] = body.value;
+      updates[`users/${uid}/devices/${deviceId}/datastreams/${body.pin}/updatedAt`] = now;
       updatedPins.push({ pin: body.pin, value: body.value });
     }
 
@@ -105,6 +108,7 @@ export async function POST(req: NextRequest) {
     if (qPin && qVal !== null) {
       const numVal = isNaN(Number(qVal)) ? qVal : Number(qVal);
       updates[`users/${uid}/devices/${deviceId}/datastreams/${qPin}/value`] = numVal;
+      updates[`users/${uid}/devices/${deviceId}/datastreams/${qPin}/updatedAt`] = now;
       updatedPins.push({ pin: qPin, value: numVal });
     }
 

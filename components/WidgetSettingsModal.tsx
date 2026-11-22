@@ -306,7 +306,7 @@ export default function WidgetSettingsModal({
           <button className="ds-btn-cancel" onClick={onClose}>
             Cancel
           </button>
-          <button className="ds-btn-save-lime" onClick={handleSave}>
+          <button className="ds-btn-save-blue" onClick={handleSave}>
             Save
           </button>
         </div>

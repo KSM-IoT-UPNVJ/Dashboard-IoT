@@ -16,6 +16,8 @@ interface DashboardItem {
   deviceIds?: string[];
   createdAt: number;
   widgets: CanvasWidget[];
+  isPublic?: boolean;
+  showOnLandingPage?: boolean;
 }
 
 function getDashboardDeviceIds(dashboard: DashboardItem | null): string[] {
@@ -79,6 +81,14 @@ export default function DashboardContent() {
   const [showNewDsModal, setShowNewDsModal] = useState(false);
   const [targetDeviceForDs, setTargetDeviceForDs] = useState<string>("");
 
+  // Confirmation Modal for Public / Private toggle
+  const [confirmPublicModal, setConfirmPublicModal] = useState<{
+    show: boolean;
+    targetState: boolean;
+    dashId: string;
+    dashName: string;
+  } | null>(null);
+
   // Drag-and-drop reorder
   const [draggedWidgetIdx, setDraggedWidgetIdx] = useState<number | null>(null);
 
@@ -140,10 +150,19 @@ export default function DashboardContent() {
         setSelectedDevicesForNewDash([]);
         return;
       }
-      const list: DeviceItem[] = Object.entries(data).map(([id, val]) => ({
-        id,
-        ...(val as Omit<DeviceItem, "id">),
-      }));
+      const list: DeviceItem[] = Object.entries(data).map(([id, val]) => {
+        const item = val as Omit<DeviceItem, "id">;
+        const last = Number(item.lastSeen || item.lastOnline || 0);
+        const isOnline = item.status === "online" && last > 0 && Date.now() - last <= 30 * 60 * 1000;
+        if (item.status === "online" && !isOnline && user) {
+          update(ref(rtdb, `users/${user.uid}/devices/${id}`), { status: "offline" }).catch(() => {});
+        }
+        return {
+          id,
+          ...item,
+          status: isOnline ? "online" : "offline",
+        };
+      });
       setDevices(list);
       // Drop selections for devices that no longer exist
       setSelectedDevicesForNewDash((prev) => prev.filter((id) => list.some((d) => d.id === id)));
@@ -315,6 +334,51 @@ export default function DashboardContent() {
     });
   };
 
+  const handleOpenConfirmPublic = () => {
+    if (!activeDashboard) return;
+    const isCurrentlyPublic = Boolean(activeDashboard.isPublic || activeDashboard.showOnLandingPage);
+    const nextState = !isCurrentlyPublic;
+    setConfirmPublicModal({
+      show: true,
+      targetState: nextState,
+      dashId: activeDashboard.id,
+      dashName: activeDashboard.name,
+    });
+  };
+
+  const handleConfirmTogglePublic = async () => {
+    if (!user || !confirmPublicModal) return;
+    const { dashId, targetState } = confirmPublicModal;
+    setConfirmPublicModal(null);
+    try {
+      await update(ref(rtdb, `users/${user.uid}/dashboards/${dashId}`), {
+        isPublic: targetState,
+        showOnLandingPage: targetState,
+        updatedAt: Date.now(),
+      });
+
+      await fetch("/api/public-projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          uid: user.uid,
+          dashboardId: dashId,
+          isPublic: targetState,
+        }),
+      });
+
+      setDashboards((prev) =>
+        prev.map((d) =>
+          d.id === dashId
+            ? { ...d, isPublic: targetState, showOnLandingPage: targetState }
+            : d
+        )
+      );
+    } catch (err) {
+      console.error("Gagal mengubah status publik dashboard:", err);
+    }
+  };
+
   // Drag and Drop from Palette
   const handlePaletteDragStart = (e: DragEvent, type: WidgetType) => {
     e.dataTransfer.setData("widgetType", type);
@@ -362,9 +426,15 @@ export default function DashboardContent() {
       dashboardDevices.find((d) => d.id === widget.deviceId) || connectedDevice;
     if (!user || !resolvedDevice?.id || !widget.vpin) return;
     try {
+      const now = Date.now();
       await update(ref(rtdb, `users/${user.uid}/devices/${resolvedDevice.id}/datastreams/${widget.vpin}`), {
         value: nextVal,
+        updatedAt: now,
       });
+      // Best-effort push history for chart
+      const historyRef = ref(rtdb, `users/${user.uid}/devices/${resolvedDevice.id}/history/${widget.vpin}`);
+      const newEntry = push(historyRef);
+      await set(newEntry, { value: Number(nextVal) || 0, timestamp: now });
     } catch (err) {
       console.error(err);
     }
@@ -496,6 +566,39 @@ export default function DashboardContent() {
                   </p>
                 </div>
                 <div className="dash-active-actions">
+                  <button
+                    type="button"
+                    className={`btn-dash-public-toggle ${
+                      activeDashboard.isPublic || activeDashboard.showOnLandingPage ? "is-public" : ""
+                    }`}
+                    onClick={handleOpenConfirmPublic}
+                    title={
+                      activeDashboard.isPublic || activeDashboard.showOnLandingPage
+                        ? "Status: Public (Klik untuk mengubah menjadi Private)"
+                        : "Status: Private (Klik untuk mempublikasikan)"
+                    }
+                    style={{
+                      display: "inline-flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      padding: "6px 16px",
+                      borderRadius: 999,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      cursor: "pointer",
+                      border:
+                        activeDashboard.isPublic || activeDashboard.showOnLandingPage
+                          ? "1px solid #86efac"
+                          : "1px solid #d1d5db",
+                      background:
+                        activeDashboard.isPublic || activeDashboard.showOnLandingPage ? "#f0fdf4" : "#ffffff",
+                      color:
+                        activeDashboard.isPublic || activeDashboard.showOnLandingPage ? "#15803d" : "#4b5563",
+                      transition: "all 0.15s ease",
+                    }}
+                  >
+                    {activeDashboard.isPublic || activeDashboard.showOnLandingPage ? "Public" : "Private"}
+                  </button>
                   <button
                     className={`btn-dash-edit-pill ${isEditing ? "is-editing" : ""}`}
                     onClick={() => setIsEditing(!isEditing)}
@@ -721,14 +824,14 @@ export default function DashboardContent() {
                                     title="Configure Device & Pin"
                                     onClick={() => setActiveWidgetModal(w)}
                                   >
-                                    ⚙️
+                                    <img src="/icons/sidebar-settings.svg" alt="Config" style={{ width: 14, height: 14 }} />
                                   </button>
                                   <button
                                     className="btn-card-trash"
                                     title="Delete"
                                     onClick={() => removeWidgetFromDashboard(w.id)}
                                   >
-                                    ✕
+                                    <img src="/icons/action-trash.svg" alt="Delete" style={{ width: 14, height: 14 }} />
                                   </button>
                                 </div>
                               )}
@@ -796,13 +899,21 @@ export default function DashboardContent() {
                               {/* IMAGE */}
                               {w.type === "image" && (
                                 <div className="render-image-block">
-                                  <div className="image-mock-esp32">
-                                    <span className="dot-pin p-tl" />
-                                    <span className="dot-pin p-tr" />
-                                    <span className="dot-pin p-bl" />
-                                    <span className="dot-pin p-br" />
-                                    <div className="esp-chip-core">{targetDev?.type || "ESP32"}</div>
-                                  </div>
+                                  {typeof currentVal === "string" && (currentVal.startsWith("http") || currentVal.startsWith("data:image")) ? (
+                                    <img
+                                      src={currentVal}
+                                      alt={w.title}
+                                      style={{ width: "100%", height: "100%", objectFit: "cover", borderRadius: 10 }}
+                                    />
+                                  ) : (
+                                    <div className="image-mock-esp32">
+                                      <span className="dot-pin p-tl" />
+                                      <span className="dot-pin p-tr" />
+                                      <span className="dot-pin p-bl" />
+                                      <span className="dot-pin p-br" />
+                                      <div className="esp-chip-core">{targetDev?.type || "ESP32"}</div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
 
@@ -841,12 +952,34 @@ export default function DashboardContent() {
                               {/* VIDEO */}
                               {w.type === "video" && (
                                 <div className="render-video-block">
-                                  <div className="video-camera-screen">
-                                    <div className="camera-live-badge">LIVE</div>
-                                    <div className="camera-glitch-box b1" />
-                                    <div className="camera-glitch-box b2" />
-                                    <div className="camera-footer-info">CAM-01</div>
-                                  </div>
+                                  {typeof currentVal === "string" && (currentVal.startsWith("http") || currentVal.includes("youtube.com") || currentVal.includes("youtu.be")) ? (
+                                    <div className="video-camera-screen" style={{ position: "relative", overflow: "hidden" }}>
+                                      {currentVal.includes("youtube.com") || currentVal.includes("youtu.be") ? (
+                                        <iframe
+                                          src={currentVal.includes("embed") ? currentVal : currentVal.replace("watch?v=", "embed/")}
+                                          title={w.title}
+                                          style={{ width: "100%", height: "100%", border: "none" }}
+                                          allow="autoplay; encrypted-media"
+                                          allowFullScreen
+                                        />
+                                      ) : (
+                                        <img
+                                          src={currentVal}
+                                          alt="Live stream"
+                                          style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                        />
+                                      )}
+                                      <div className="camera-live-badge">LIVE</div>
+                                      <div className="camera-footer-info">CAM-01</div>
+                                    </div>
+                                  ) : (
+                                    <div className="video-camera-screen">
+                                      <div className="camera-live-badge">LIVE</div>
+                                      <div className="camera-glitch-box b1" />
+                                      <div className="camera-glitch-box b2" />
+                                      <div className="camera-footer-info">CAM-01</div>
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -984,6 +1117,63 @@ export default function DashboardContent() {
           onClose={() => setShowNewDsModal(false)}
           onSave={handleSaveNewDatastream}
         />
+      )}
+      {/* ── MODAL: CONFIRM PUBLIC / PRIVATE TOGGLE ── */}
+      {confirmPublicModal && confirmPublicModal.show && (
+        <div
+          className="lp-projects-modal-backdrop"
+          onClick={() => setConfirmPublicModal(null)}
+          style={{ zIndex: 10000 }}
+        >
+          <div
+            className="lp-projects-modal-box"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth: 460, padding: "28px" }}
+          >
+            <h3 style={{ fontSize: 18, fontWeight: 700, color: "#111827", margin: "0 0 10px" }}>
+              {confirmPublicModal.targetState ? "Publikasikan Dashboard?" : "Jadikan Dashboard Private?"}
+            </h3>
+            <p style={{ fontSize: 14, color: "#4b5563", lineHeight: 1.55, margin: "0 0 24px" }}>
+              {confirmPublicModal.targetState
+                ? `Apakah Anda yakin ingin mempublikasikan dashboard "${confirmPublicModal.dashName}" dan menampilkannya di Landing Page? Dashboard akan dapat dilihat oleh publik di bagian Our Project.`
+                : `Apakah Anda yakin ingin mengubah status dashboard "${confirmPublicModal.dashName}" menjadi Private? Dashboard tidak akan lagi ditampilkan pada Landing Page.`}
+            </p>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+              <button
+                type="button"
+                onClick={() => setConfirmPublicModal(null)}
+                style={{
+                  padding: "8px 18px",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  border: "1px solid #d1d5db",
+                  background: "#ffffff",
+                  color: "#374151",
+                  cursor: "pointer",
+                }}
+              >
+                Batal
+              </button>
+              <button
+                type="button"
+                onClick={handleConfirmTogglePublic}
+                style={{
+                  padding: "8px 18px",
+                  borderRadius: 8,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  border: "none",
+                  background: confirmPublicModal.targetState ? "#15803d" : "#4b5563",
+                  color: "#ffffff",
+                  cursor: "pointer",
+                }}
+              >
+                {confirmPublicModal.targetState ? "Ya, Publikasikan" : "Ya, Jadikan Private"}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import OurProjectSection from "./OurProjectSection";
 
 const TEAM = [
   { name: "Moh Goesny Isnady",            role: "Vice Chairman",              img: "/team/Vice_Chairman.webp" },
@@ -57,10 +58,7 @@ export default function LandingPage() {
             </div>
           </div>
           <button className="lp-nav-icon" aria-label="Profile" onClick={() => router.push("/login")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <circle cx="12" cy="8" r="4" />
-              <path d="M4 20c0-4 3.6-7 8-7s8 3 8 7" />
-            </svg>
+            <img src="/icons/profile-circle.svg" alt="Profile" style={{ width: 26, height: 26 }} />
           </button>
         </nav>
 
@@ -83,28 +81,8 @@ export default function LandingPage() {
         </div>
       </section>
 
-      {/* ────── TEAM (Tampilan awal normal) ────── */}
-      <section className="lp-team">
-        <h2 className="lp-team-title">OUR TEAM</h2>
-        <div className="lp-team-grid">
-          {TEAM.map((member) => (
-            <div key={member.name} className="lp-card">
-              <img
-                src={member.img}
-                alt={member.name}
-                className="lp-card-img"
-                onError={(e) => {
-                  (e.currentTarget as HTMLImageElement).src = "/logo-placeholder.svg";
-                }}
-              />
-              <div className="lp-card-overlay">
-                <span className="lp-card-name">{member.name}</span>
-                <span className="lp-card-role">{member.role}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </section>
+      {/* ────── OUR PROJECT SECTION (Menggantikan Our Team di halaman awal) ────── */}
+      <OurProjectSection />
 
       {/* ────── FOOTER DENGAN EASTER EGG ────── */}
       <footer className="lp-footer">
